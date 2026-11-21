@@ -173,6 +173,45 @@ class GroupedNGramPrior:
             for token, probability in results
         )
 
+    
+    def suggest_chords(
+        self,
+        prev_state: BeatState,
+        context: PriorContext | None,
+        key_id: int,
+        k: int = 3,
+    ) -> tuple[int, ...]:
+        """Suggest chord IDs from the learned joint distribution."""
+
+        if k < 1:
+            raise ValueError("k must be positive")
+
+        history = list(context.history) if context else []
+
+        if not history or history[-1] != prev_state:
+            history.append(prev_state)
+
+        # Examine all known joint key-chord combinations.
+        suggestions = self.top_k(
+            history=tuple(history),
+            k=self.key_size * self.chord_size,
+        )
+
+        result = []
+
+        for (suggested_key, chord_id), probability in suggestions:
+            if suggested_key != key_id:
+                continue
+
+            if chord_id not in result:
+                result.append(chord_id)
+
+            if len(result) >= k:
+                break
+
+        return tuple(result)
+
+
     def save(self, path):
         """Save counts and configuration in one JSON file."""
         payload = {

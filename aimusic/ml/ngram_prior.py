@@ -328,6 +328,50 @@ class NGramPrior:
             )[:k]
         )
 
+    
+    def suggest_chords(
+        self,
+        prev_state: BeatState,
+        context: PriorContext | None,
+        key_id: int,
+        k: int = 3,
+    ) -> tuple[int, ...]:
+        """Suggest chord IDs using the factorized chord stream.
+
+        The key_id is accepted to satisfy the shared proposal
+        interface. Chord probabilities are modeled independently
+        of the key stream in this factorized prior.
+        """
+        del key_id
+
+        if k < 1:
+            raise ValueError("k must be positive")
+
+        if "chord" not in self.config.streams:
+            return ()
+
+        history = list(context.history) if context else []
+
+        if not history or history[-1] != prev_state:
+            history.append(prev_state)
+
+        chord_history = tuple(
+            int(state.chord_id)
+            for state in history
+        )
+
+        suggestions = self.top_k(
+            "chord",
+            chord_history,
+            k=k,
+        )
+
+        return tuple(
+            chord_id
+            for chord_id, probability in suggestions
+        )
+
+
     def save(self, path: str | Path) -> None:
         target = Path(path)
         target.parent.mkdir(
