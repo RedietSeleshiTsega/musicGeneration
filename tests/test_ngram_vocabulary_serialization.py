@@ -1,8 +1,6 @@
 
 """Tests for versioned N-gram vocabulary serialization."""
 
-from dataclasses import replace
-
 import pytest
 
 from aimusic.core.config import StyleConfig

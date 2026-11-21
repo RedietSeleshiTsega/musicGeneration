@@ -1,8 +1,6 @@
 
 """Verify the history supplied to corpus-backed priors."""
 
-from dataclasses import replace
-
 from aimusic.core.core_types import BeatState, Layer
 from aimusic.core.vocab import DEFAULT_VOCABULARIES
 from aimusic.planning.graph import _build_prior_context
@@ -44,31 +42,37 @@ def test_graph_context_contains_source_state():
     assert len(context.history_tokens) == 1
 
 
+
 def test_second_order_history_requires_predecessor():
-    """A true trigram needs two preceding musical states."""
+    """The current graph context has only one preceding state."""
 
     earlier = make_state("Cmaj")
     previous = make_state("Fmaj")
+    target = make_state("G7")
 
-    # The context needed by a trigram:
-    expected_history = (earlier, previous)
-
-    assert len(expected_history) == 2
-
-    # The graph's current helper only receives
-    # the source state, so it cannot reconstruct
-    # the earlier state.
     end_layer = Layer(
         time_index=2,
-        states=(make_state("G7"),),
+        states=(target,),
     )
 
-    actual = _build_prior_context(
-        previous, end_layer, time_index=1
+    context = _build_prior_context(
+        previous,
+        end_layer,
+        time_index=1,
     )
 
-    assert actual.history == (previous,)
-    assert actual.history != expected_history
+    # A trigram needs the two preceding states.
+    required_history = (earlier, previous)
+
+    assert len(required_history) == 2
+
+    # Verify the actual graph behavior.
+    assert context.history == (previous,)
+    assert len(context.history) == 1
+
+    # Confirm that the earlier state is unavailable.
+    assert context.history != required_history
+
 
 
 def test_different_paths_can_share_same_source():

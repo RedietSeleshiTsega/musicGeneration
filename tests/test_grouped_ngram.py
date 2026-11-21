@@ -1,8 +1,6 @@
 
 import math
 
-import pytest
-
 from aimusic.core.core_types import BeatState
 from aimusic.core.vocab import DEFAULT_VOCABULARIES
 from aimusic.ml.dataset import build_transition_examples
