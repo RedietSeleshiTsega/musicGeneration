@@ -16,10 +16,14 @@ from aimusic.core.core_types import BeatState
 from aimusic.ml.dataset import vocab_sizes_from_vocabularies
 from aimusic.ml.ngram_prior import NGramConfig, NGramPrior
 from aimusic.scoring.priors import PriorContext
+from aimusic.ml.ngram_vocab import (
+    snapshot_vocabularies,
+    validate_vocabulary_snapshot,
+)
 
 
 class GroupedNGramPrior:
-    FORMAT_VERSION = 1
+    FORMAT_VERSION = 2
 
     def __init__(
         self,
@@ -27,7 +31,9 @@ class GroupedNGramPrior:
         chord_size: int,
         order: int = 3,
         alpha: float = 0.1,
-        provenance: str = "",
+        provenance: str | dict = "",
+        *,
+        vocabulary_tokens: dict | None = None,
     ):
         if key_size < 1 or chord_size < 1:
             raise ValueError("Vocabulary sizes must be positive")
@@ -37,6 +43,7 @@ class GroupedNGramPrior:
         self.order = order
         self.alpha = alpha
         self.provenance = provenance
+        self.vocabulary_tokens = vocabulary_tokens
 
         # Reuse the existing N-gram probability engine.
         # Its internal "chord" stream stores joint token IDs.
@@ -66,6 +73,10 @@ class GroupedNGramPrior:
             order,
             alpha,
             provenance,
+            vocabulary_tokens=snapshot_vocabularies(
+                vocabularies,
+                ("key", "chord"),
+            ),
         )
 
     def encode(self, state: BeatState) -> int:
@@ -165,7 +176,12 @@ class GroupedNGramPrior:
     def save(self, path):
         """Save counts and configuration in one JSON file."""
         payload = {
-            "version": self.FORMAT_VERSION,
+            "version": (
+                self.FORMAT_VERSION
+                if self.vocabulary_tokens is not None
+                else 1
+            ),
+            "vocabulary_tokens": self.vocabulary_tokens,
             "model": "grouped_key_chord_ngram",
             "key_size": self.key_size,
             "chord_size": self.chord_size,
@@ -194,13 +210,19 @@ class GroupedNGramPrior:
             encoding="utf-8",
         )
 
+    def validate_vocabularies(self, vocabularies):
+        validate_vocabulary_snapshot(
+            self.vocabulary_tokens,
+            vocabularies,
+        )
+
     @classmethod
     def load(cls, path):
         payload = json.loads(
             Path(path).read_text(encoding="utf-8")
         )
 
-        if payload["version"] != cls.FORMAT_VERSION:
+        if payload["version"] not in (1, cls.FORMAT_VERSION):
             raise ValueError("Unsupported grouped model version")
 
         model = cls(
@@ -209,6 +231,7 @@ class GroupedNGramPrior:
             payload["order"],
             payload["alpha"],
             payload.get("provenance", ""),
+            vocabulary_tokens=payload.get("vocabulary_tokens"),
         )
 
         table = model.engine.counts["chord"]

@@ -158,7 +158,37 @@ def _top_k_prior_chord_ids(
     if isinstance(prior, NullPrior):
         return ()
 
+    from aimusic.ml.grouped_ngram import GroupedNGramPrior
+
+    if isinstance(prior, GroupedNGramPrior):
+
+        history = (prev_state,)
+
+        joint_suggestions = prior.top_k(
+            history=history,
+            k=prior.key_size * prior.chord_size,
+        )
+
+        chord_ids = []
+        for (suggested_key, suggested_chord), probability in joint_suggestions:
+            if suggested_key != key_id:
+                continue
+
+            if not vocabularies.chords.has_id(suggested_chord):
+                continue
+
+            chord_ids.append(suggested_chord)
+
+            if len(chord_ids) >= top_k:
+                break
+
+        return tuple(chord_ids)
+
+
     anchor_head_id = _head_id("root", vocabularies)
+    
+    if isinstance(prior, NullPrior):
+        return ()
     queries = tuple(
         PriorQuery(
             prev_state=prev_state,

@@ -36,6 +36,9 @@ from aimusic.scoring.tension import (
     target_tension_curve,
 )
 from aimusic.theory.edo import EDO
+from aimusic.core.vocab import build_default_vocabularies
+from aimusic.ml.ngram_prior import NGramPrior
+from aimusic.ml.grouped_ngram import GroupedNGramPrior
 
 
 def _json_ready(value: Any) -> Any:
@@ -172,11 +175,49 @@ def handle_generate(args: argparse.Namespace) -> None:
         sb_config=SBConfig(horizon_t=args.beats,
                            max_horizon_per_solve=getattr(args, "max_horizon_per_solve", None)),
     )
+    
     prior: Prior | None = (
         NullPrior() if getattr(args, "null_prior", False) else None
     )
+
     prior_bundle = getattr(args, "prior_bundle", None)
-    if prior_bundle:
+    grouped_ngram_path = getattr(args, "grouped_ngram", None)
+    ngram_path = getattr(args, "ngram_json", None)
+    multi_order_paths = getattr(args, "multi_order_ngram", None)
+
+    selected = sum((
+        bool(prior_bundle),
+        bool(grouped_ngram_path),
+        bool(ngram_path),
+        bool(multi_order_paths),
+    ))
+
+    if selected > 1:
+        raise ValueError("Select only one trained prior model.")
+
+    if selected and getattr(args, "null_prior", False):
+        raise ValueError("Cannot combine NullPrior with a trained prior.")
+
+    
+    if ngram_path:
+        prior = NGramPrior.load(ngram_path)
+
+    elif grouped_ngram_path:
+        prior = GroupedNGramPrior.load(grouped_ngram_path)
+
+    elif multi_order_paths:
+        from aimusic.ml.multi_order_ngram import MultiOrderNGramPrior
+
+        unigram_path, bigram_path, trigram_path = multi_order_paths
+
+        prior = MultiOrderNGramPrior(
+            GroupedNGramPrior.load(unigram_path),
+            GroupedNGramPrior.load(bigram_path),
+            GroupedNGramPrior.load(trigram_path),
+            strength=args.ngram_strength,
+        )
+
+    elif prior_bundle:
         try:
             from aimusic.ml.inference import load_trained_neural_prior
         except ImportError:
@@ -186,7 +227,22 @@ def handle_generate(args: argparse.Namespace) -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
+
         prior = load_trained_neural_prior(prior_bundle)
+
+
+    
+    # Validate serialized N-gram token mappings before generation.
+    # Legacy version 1 models do not contain vocabulary snapshots,
+    # so retain backward compatibility with those models.
+    if isinstance(prior, (NGramPrior, GroupedNGramPrior)):
+        if prior.vocabulary_tokens is not None:
+            generation_vocab = build_default_vocabularies(
+                style_config
+            )
+            prior.validate_vocabularies(generation_vocab)
+
+
     plan_result, next_key = run_method_a(run_config, key=RNGKey(seed=args.seed), prior=prior)
     score, _ = decode_path_to_score(
         plan_result.path,
@@ -486,6 +542,38 @@ def main() -> None:
         help="Path to a trained prior artifact bundle (requires optional [ml] extra).",
     )
     gen_parser.set_defaults(func=handle_generate)
+
+
+    gen_parser.add_argument(
+        "--ngram-json",
+        type=str,
+        default=None,
+        help="Path to a factorized NGramPrior JSON model.",
+    )
+
+    gen_parser.add_argument(
+        "--grouped-ngram",
+        type=str,
+        default=None,
+        help="Path to a grouped key-chord NGramPrior JSON model.",
+    )
+
+    gen_parser.add_argument(
+        "--multi-order-ngram",
+        type=str,
+        nargs=3,
+        metavar=("UNIGRAM", "BIGRAM", "TRIGRAM"),
+        default=None,
+        help="Paths to grouped unigram, bigram and trigram models.",
+    )
+
+    gen_parser.add_argument(
+        "--ngram-strength",
+        type=float,
+        default=20.0,
+        help="Multi-order interpolation strength.",
+    )
+
 
     ins_parser = subparsers.add_parser("inspect", help="Inspect diagnostics")
     ins_parser.add_argument("file", type=str)

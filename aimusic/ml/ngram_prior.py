@@ -1,3 +1,6 @@
+
+"""Factorized corpus-backed N-gram prior."""
+
 from __future__ import annotations
 
 import json
@@ -19,6 +22,10 @@ from aimusic.scoring.priors import (
     STRUCTURAL_STREAM_NAMES,
     StructuralEventTokens,
     TokenizedPriorQuery,
+)
+from aimusic.ml.ngram_vocab import (
+    snapshot_vocabularies,
+    validate_vocabulary_snapshot,
 )
 
 
@@ -49,14 +56,15 @@ class NGramConfig:
 class NGramPrior:
     """Train N-grams independently for selected musical attributes."""
 
-    FORMAT_VERSION = 1
+    FORMAT_VERSION = 2
 
     def __init__(
         self,
         config: NGramConfig,
         vocabulary_sizes: Mapping[str, int],
         *,
-        provenance: str = "",
+        provenance: str | dict = "",
+        vocabulary_tokens: dict | None = None,
     ):
         self.config = config
 
@@ -69,6 +77,7 @@ class NGramPrior:
             raise ValueError("Vocabulary sizes must be positive")
 
         self.provenance = provenance
+        self.vocabulary_tokens = vocabulary_tokens
 
         self.counts = {
             s: defaultdict(Counter)
@@ -81,12 +90,18 @@ class NGramPrior:
         vocabularies: Vocabularies,
         *,
         config: NGramConfig | None = None,
-        provenance: str = "",
+        provenance: str | dict = "",
     ):
+        selected_config = config or NGramConfig()
+
         return cls(
-            config or NGramConfig(),
+            selected_config,
             vocab_sizes_from_vocabularies(vocabularies),
             provenance=provenance,
+            vocabulary_tokens=snapshot_vocabularies(
+                vocabularies,
+                selected_config.streams,
+            ),
         )
 
     def _normalize(self, stream: str, token: int) -> int:
@@ -321,7 +336,12 @@ class NGramPrior:
         )
 
         payload = {
-            "version": self.FORMAT_VERSION,
+            "version": (
+                self.FORMAT_VERSION
+                if self.vocabulary_tokens is not None
+                else 1
+            ),
+            "vocabulary_tokens": self.vocabulary_tokens,
             "order": self.config.order,
             "alpha": self.config.alpha,
             "streams": list(self.config.streams),
@@ -349,13 +369,19 @@ class NGramPrior:
             encoding="utf-8",
         )
 
+    def validate_vocabularies(self, vocabularies):
+        validate_vocabulary_snapshot(
+            self.vocabulary_tokens,
+            vocabularies,
+        )
+
     @classmethod
     def load(cls, path: str | Path):
         payload = json.loads(
             Path(path).read_text(encoding="utf-8")
         )
 
-        if payload["version"] != cls.FORMAT_VERSION:
+        if payload["version"] not in (1, cls.FORMAT_VERSION):
             raise ValueError("Unsupported NGramPrior format")
 
         config = NGramConfig(
@@ -367,7 +393,8 @@ class NGramPrior:
         model = cls(
             config,
             payload["vocabulary_sizes"],
-            provenance=payload["provenance"],
+            provenance=payload.get("provenance", ""),
+            vocabulary_tokens=payload.get("vocabulary_tokens"),
         )
 
         for stream in config.streams:

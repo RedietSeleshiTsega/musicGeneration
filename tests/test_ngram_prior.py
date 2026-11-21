@@ -136,3 +136,98 @@ def test_partial_model():
     )
 
     assert score1 == score2
+
+
+def test_history_matches_previous_states():
+    """Verify that trigram scoring uses the correct two states."""
+    model = trained(order=3, streams=("chord",))
+
+    states = [
+        state("Cmaj"),
+        state("G7"),
+        state("Amin"),
+        state("Dmaj"),
+    ]
+
+    queries = build_transition_examples(
+        states,
+        history_len=2,
+        future_hint_len=0,
+    )
+
+    query = queries[2]
+
+    expected_history = (
+        states[1].chord_id,
+        states[2].chord_id,
+    )
+
+    expected_score = math.log(
+        model.probability(
+            "chord",
+            states[3].chord_id,
+            expected_history,
+        )
+    )
+
+    actual_score = model.logp_next(
+        query.prev_state,
+        query.next_state,
+        query.time_index,
+        query.context,
+    )
+
+    assert actual_score == pytest.approx(expected_score)
+
+
+def test_scalar_batch_equivalence():
+    """Individual and batch APIs must return matching scores."""
+    model = trained(order=3, streams=("chord", "key"))
+
+    states = [
+        state("Cmaj"),
+        state("G7"),
+        state("Amin"),
+        state("Dmaj"),
+    ]
+
+    queries = build_transition_examples(
+        states,
+        history_len=2,
+        future_hint_len=0,
+    )
+
+    batch_scores = model.logp_next_batch(queries)
+
+    scalar_scores = [
+        model.logp_next(
+            q.prev_state,
+            q.next_state,
+            q.time_index,
+            q.context,
+        )
+        for q in queries
+    ]
+
+    assert batch_scores == pytest.approx(scalar_scores)
+
+
+def test_suggestions_identical_after_reload(tmp_path):
+    """Saved model must produce identical top-K suggestions."""
+    model = trained(order=3)
+
+    history = (
+        state("Cmaj").chord_id,
+        state("G7").chord_id,
+    )
+
+    original = model.top_k("chord", history, k=5)
+
+    path = tmp_path / "saved_prior.json"
+    model.save(path)
+
+    reloaded = NGramPrior.load(path)
+
+    restored = reloaded.top_k("chord", history, k=5)
+
+    assert restored == original

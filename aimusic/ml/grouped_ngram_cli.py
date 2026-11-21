@@ -7,10 +7,15 @@ from pathlib import Path
 
 from aimusic.core.config import StyleConfig
 from aimusic.core.vocab import build_default_vocabularies
-from aimusic.ml.annotate import annotate_beat_grid
 from aimusic.ml.dataset import build_transition_examples
 from aimusic.ml.grouped_ngram import GroupedNGramPrior
-from aimusic.ml.midi_ingest import parse_midi_beats
+from aimusic.ml.ngram_corpus import (
+    load_ngram_corpus,
+    corpus_provenance,
+)
+
+
+
 
 
 def main():
@@ -36,15 +41,19 @@ def main():
 
     vocab = build_default_vocabularies(StyleConfig())
 
-    pieces = [
-        tuple(
-            annotate_beat_grid(
-                parse_midi_beats(path),
-                vocab,
-            )
-        )
-        for path in files
+    
+    records = load_ngram_corpus(root, vocab)
+
+    pieces = [record.states for record in records]
+
+    training_records = records[:-args.held_out]
+    evaluation_records = records[-args.held_out:]
+
+    metadata = corpus_provenance(training_records)
+    metadata["held_out_piece_ids"] = [
+        record.piece_id for record in evaluation_records
     ]
+
 
     train_pieces = pieces[:-args.held_out]
     test_pieces = pieces[-args.held_out:]
@@ -53,7 +62,7 @@ def main():
         vocab,
         order=args.order,
         alpha=args.alpha,
-        provenance=str(root.resolve()),
+        provenance=metadata,
     )
 
     model.fit(train_pieces)

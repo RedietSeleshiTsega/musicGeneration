@@ -7,9 +7,11 @@ from pathlib import Path
 
 from aimusic.core.config import StyleConfig
 from aimusic.core.vocab import build_default_vocabularies
-from aimusic.ml.annotate import annotate_beat_grid
-from aimusic.ml.midi_ingest import parse_midi_beats
 from aimusic.ml.dataset import build_transition_examples
+from aimusic.ml.ngram_corpus import (
+    load_ngram_corpus,
+    corpus_provenance,
+)
 from aimusic.ml.ngram_prior import NGramConfig, NGramPrior
 
 
@@ -34,32 +36,39 @@ def main():
 
     root = Path(args.midi_dir)
 
-    paths = sorted(root.rglob("*.mid")) + sorted(
-        root.rglob("*.midi")
-    )
-
-    if not paths:
-        parser.error("No MIDI files found")
-
-    if not 1 <= args.held_out < len(paths):
-        parser.error("Invalid held-out size")
-
+    # Build the same vocabularies used for music generation.
     vocabularies = build_default_vocabularies(
         StyleConfig()
     )
 
-    pieces = [
-        tuple(
-            annotate_beat_grid(
-                parse_midi_beats(path),
-                vocabularies,
-            )
-        )
-        for path in paths
-    ]
+    # Load MIDI files through the canonical corpus pipeline.
+    # Each song remains an independent sequence of BeatStates.
+    try:
+        records = load_ngram_corpus(root, vocabularies)
+    except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
+        parser.error(str(exc))
 
-    train_pieces = pieces[:-args.held_out]
-    test_pieces = pieces[-args.held_out:]
+    if not 1 <= args.held_out < len(records):
+        parser.error(
+            "Held-out size must be at least 1 and smaller "
+            "than the number of MIDI songs"
+        )
+
+    # Preserve the ordering of each song's structural states.
+    pieces = [record.states for record in records]
+
+    # Split by song to prevent train/test leakage.
+    training_records = records[:-args.held_out]
+    evaluation_records = records[-args.held_out:]
+
+    train_pieces = [record.states for record in training_records]
+    test_pieces = [record.states for record in evaluation_records]
+
+    # Record the exact training sources and evaluation split.
+    metadata = corpus_provenance(training_records)
+    metadata["held_out_piece_ids"] = [
+        record.piece_id for record in evaluation_records
+    ]
 
     model = NGramPrior.from_vocabularies(
         vocabularies,
@@ -68,15 +77,14 @@ def main():
             alpha=args.alpha,
             streams=tuple(args.streams),
         ),
-        provenance=(
-            f"Heuristic MIDI annotations from {root.resolve()}"
-        ),
+        provenance=metadata,
     )
 
+    # Train and serialize the model.
     model.fit(train_pieces)
     model.save(args.output)
 
-    # Verify that the trained model can be reloaded.
+    # Evaluate the serialized model, not only the in-memory one.
     loaded_model = NGramPrior.load(args.output)
 
     queries = [
