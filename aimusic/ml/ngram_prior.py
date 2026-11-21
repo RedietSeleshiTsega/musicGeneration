@@ -79,7 +79,10 @@ class NGramPrior:
         self.provenance = provenance
         self.vocabulary_tokens = vocabulary_tokens
 
-        self.counts = {
+        self.counts: dict[
+            str,
+            defaultdict[tuple[int, ...], Counter[int]]
+        ] = {
             s: defaultdict(Counter)
             for s in config.streams
         }

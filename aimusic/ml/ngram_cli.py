@@ -1,17 +1,12 @@
-
 """Train and evaluate the individual NGramPrior."""
 
 import argparse
-import math
 from pathlib import Path
 
 from aimusic.core.config import StyleConfig
 from aimusic.core.vocab import build_default_vocabularies
-from aimusic.ml.dataset import build_transition_examples
-from aimusic.ml.ngram_corpus import (
-    load_ngram_corpus,
-    corpus_provenance,
-)
+from aimusic.ml.ngram_corpus import load_ngram_corpus, corpus_provenance
+from aimusic.ml.ngram_evaluation import evaluate_heldout, save_report
 from aimusic.ml.ngram_prior import NGramConfig, NGramPrior
 
 
@@ -31,40 +26,29 @@ def main():
         default=["chord", "key"],
     )
     parser.add_argument("--held-out", type=int, default=2)
-
-    args = parser.parse_args()
-
-    root = Path(args.midi_dir)
-
-    # Build the same vocabularies used for music generation.
-    vocabularies = build_default_vocabularies(
-        StyleConfig()
+    parser.add_argument(
+        "--report",
+        default=None,
+        help="JSON report path; default: <output_stem>_heldout_report.json",
     )
 
-    # Load MIDI files through the canonical corpus pipeline.
-    # Each song remains an independent sequence of BeatStates.
+    args = parser.parse_args()
+    root = Path(args.midi_dir)
+    vocabularies = build_default_vocabularies(StyleConfig())
+
     try:
         records = load_ngram_corpus(root, vocabularies)
     except (FileNotFoundError, NotADirectoryError, ValueError) as exc:
         parser.error(str(exc))
 
     if not 1 <= args.held_out < len(records):
-        parser.error(
-            "Held-out size must be at least 1 and smaller "
-            "than the number of MIDI songs"
-        )
+        parser.error("Held-out size must be at least 1 and smaller than the corpus")
 
-    # Preserve the ordering of each song's structural states.
-    pieces = [record.states for record in records]
-
-    # Split by song to prevent train/test leakage.
     training_records = records[:-args.held_out]
     evaluation_records = records[-args.held_out:]
-
     train_pieces = [record.states for record in training_records]
     test_pieces = [record.states for record in evaluation_records]
 
-    # Record the exact training sources and evaluation split.
     metadata = corpus_provenance(training_records)
     metadata["held_out_piece_ids"] = [
         record.piece_id for record in evaluation_records
@@ -79,41 +63,37 @@ def main():
         ),
         provenance=metadata,
     )
-
-    # Train and serialize the model.
     model.fit(train_pieces)
     model.save(args.output)
 
-    # Evaluate the serialized model, not only the in-memory one.
+    # Evaluate the serialized model, not just the in-memory instance.
     loaded_model = NGramPrior.load(args.output)
+    report = evaluate_heldout(
+        loaded_model, training_records, evaluation_records, vocabularies
+    )
 
-    queries = [
-        query
-        for piece in test_pieces
-        for query in build_transition_examples(
-            piece,
-            history_len=max(1, args.order - 1),
-            future_hint_len=0,
-        )
-    ]
+    output = Path(args.output)
+    report_path = Path(args.report) if args.report else output.with_name(
+        output.stem + "_heldout_report.json"
+    )
+    save_report(report, report_path)
 
-    if not queries:
-        parser.error("No held-out transitions found")
-
-    scores = loaded_model.logp_next_batch(queries)
-
-    nll = -sum(scores) / len(scores)
-    perplexity = math.exp(nll)
-
-    print("\n=== NGramPrior Results ===")
-    print(f"Saved model: {Path(args.output).resolve()}")
+    results = report["models"]
+    print("\n=== NGramPrior Held-Out Comparison ===")
+    print(f"Saved model: {output.resolve()}")
+    print(f"Saved JSON report: {report_path.resolve()}")
     print(f"Training pieces: {len(train_pieces)}")
     print(f"Test pieces: {len(test_pieces)}")
-    print(f"Held-out transitions: {len(queries)}")
+    print(f"Held-out transitions: {report['heldout_transitions']}")
     print(f"Streams: {args.streams}")
     print(f"N-gram order: {args.order}")
-    print(f"Negative log-likelihood: {nll:.6f}")
-    print(f"Perplexity: {perplexity:.6f}")
+    for label in ("ngram", "unigram", "null_prior_uniform_surrogate"):
+        metrics = results[label]
+        print(
+            f"{label}: NLL={metrics['nll']:.6f}, "
+            f"perplexity={metrics['perplexity']:.6f}"
+        )
+    print("Actual NullPrior: neutral score 0 (unnormalized; no NLL/PPL)")
 
 
 if __name__ == "__main__":
