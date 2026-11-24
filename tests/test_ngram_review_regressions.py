@@ -12,7 +12,7 @@ from aimusic.core.vocab import build_default_vocabularies
 from aimusic.ml.ngram_prior import NGramConfig, NGramPrior
 from aimusic.planning.graph import _build_prior_context
 
-from tests.test_grouped_ngram import state
+from tests.ngram_test_helpers import state
 
 
 @pytest.fixture

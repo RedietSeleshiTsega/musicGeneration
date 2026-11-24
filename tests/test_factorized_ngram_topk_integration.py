@@ -2,17 +2,31 @@
 """Verify factorized NGramPrior proposals reach candidate generation."""
 
 from aimusic.core.config import StyleConfig
+from aimusic.core.core_types import BeatState
 from aimusic.core.vocab import build_default_vocabularies
 from aimusic.ml.ngram_prior import NGramConfig, NGramPrior
 from aimusic.planning.candidates import _top_k_prior_chord_ids
-from tests.test_grouped_ngram import state
+
+
+def make_state(chord_label, key_label, vocab):
+    """Build a BeatState using the project's actual token IDs."""
+    return BeatState(
+        meter_id=0,
+        beat_in_bar=0,
+        boundary_lvl=0,
+        key_id=vocab.keys.token_for_label(key_label).id,
+        chord_id=vocab.chords.token_for_label(chord_label).id,
+        role_id=0,
+        head_id=1,
+        groove_id=0,
+    )
 
 
 def test_factorized_ngram_topk_is_consumed(monkeypatch):
     vocab = build_default_vocabularies(StyleConfig())
 
-    previous = state("Cmaj", "C")
-    preferred = state("G7", "C")
+    previous = make_state("Cmaj", "C", vocab)
+    preferred = make_state("G7", "C", vocab)
 
     model = NGramPrior.from_vocabularies(
         vocab,

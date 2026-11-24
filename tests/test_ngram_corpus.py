@@ -9,7 +9,7 @@ from aimusic.ml.ngram_corpus import (
     NGramCorpusRecord,
     corpus_provenance,
 )
-from tests.test_grouped_ngram import state
+from tests.ngram_test_helpers import state
 
 
 def make_record(piece_id, states):

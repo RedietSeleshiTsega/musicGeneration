@@ -10,7 +10,7 @@ from aimusic.core.vocab import build_default_vocabularies
 from aimusic.ml.ngram_corpus import NGramCorpusRecord
 from aimusic.ml.ngram_evaluation import evaluate_heldout, save_report
 from aimusic.ml.ngram_prior import NGramConfig, NGramPrior
-from tests.test_grouped_ngram import state
+from tests.ngram_test_helpers import state
 
 
 def record(piece_id, states):
