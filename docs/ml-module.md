@@ -382,3 +382,103 @@ additive on top of the existing symbolic-music generator.
 - Inference shim: `aimusic/ml/inference.py::load_trained_neural_prior`
 - Monitor API: `aimusic/ml/monitoring.py`
 - CLI help: `python -m aimusic.ml.cli train --help`
+
+
+## Corpus-backed NGramPrior
+
+`NGramPrior` is a non-neural, factorized prior trained on
+sequences of structural `BeatState` objects.
+
+### Structural streams
+
+The model supports eight streams:
+
+- meter
+- beat_position
+- boundary
+- key
+- chord
+- role
+- head
+- groove
+
+Each selected stream is modeled independently. The transition
+log score is the sum of the active streams' log probabilities.
+
+### Smoothing and unseen contexts
+
+The model uses additive (add-alpha) smoothing:
+
+P(x | h) = (count(h, x) + alpha) /
+           (count(h) + alpha * (V + 1))
+
+where:
+
+- x is the next token.
+- h is the preceding token context.
+- V is the number of known vocabulary tokens.
+- V + 1 includes the unknown-token bucket.
+- alpha must be positive.
+
+When a context has never been observed, the model repeatedly
+drops its oldest token until an observed shorter context
+is found.
+
+If no context is observed, the model uses the unigram
+counts stored under the empty context.
+
+If the unigram counts are also empty, additive smoothing
+produces a uniform distribution over V + 1 tokens.
+
+Out-of-range token IDs are mapped to the unknown-token bucket.
+
+Therefore, valid scoring calls produce finite log probabilities
+for unseen contexts and unknown tokens.
+
+### Corpus provenance
+
+Training records preserve each source MIDI file's:
+
+- Piece identifier
+- SHA-256 hash
+- BeatState count
+- Annotation method
+
+Training and held-out songs are kept separate.
+
+### Serialization
+
+Version 2 JSON models preserve:
+
+- N-gram order and smoothing parameter
+- Selected streams
+- N-gram counts
+- Complete token ID-to-label mappings
+- Corpus provenance
+
+Version 1 models remain loadable, but lack the full vocabulary
+snapshots used for compatibility validation.
+
+### Evaluation
+
+Held-out evaluation compares the trained NGramPrior with:
+
+1. An order-1 unigram model using the same streams.
+2. A normalized uniform surrogate for NullPrior.
+
+The actual NullPrior returns a neutral score of zero and
+does not define a normalized probability distribution.
+Its raw score must not be interpreted as NLL or perplexity.
+
+All probabilistic baseline comparisons use identical
+held-out transitions and prediction streams.
+
+### Higher-order generation limitation
+
+The existing graph supplies only the immediately previous
+BeatState during transition scoring.
+
+Models can train and evaluate higher-order histories from
+corpus sequences. However, exact trigram conditioning during
+graph generation requires additional path-history information.
+

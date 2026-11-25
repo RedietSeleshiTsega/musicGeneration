@@ -7,7 +7,14 @@ from aimusic.core.config import StyleConfig
 from aimusic.core.core_types import BeatState
 from aimusic.core.rng import RNGKey, shuffle
 from aimusic.scoring.gttm_features import beats_per_bar
-from aimusic.scoring.priors import NullPrior, Prior, PriorContext, PriorQuery, prior_logps
+from aimusic.scoring.priors import (
+    ChordProposalPrior,
+    NullPrior,
+    Prior,
+    PriorContext,
+    PriorQuery,
+    prior_logps,
+)
 from aimusic.theory.tonal import get_fifth_steps, nearest_roots
 from aimusic.core.vocab import (
     ChordToken,
@@ -157,6 +164,26 @@ def _top_k_prior_chord_ids(
 ) -> Tuple[int, ...]:
     if isinstance(prior, NullPrior):
         return ()
+
+    # Prefer learned proposals through the optional scoring-layer protocol.
+    # The generic scoring fallback remains available for other priors.
+    if isinstance(prior, ChordProposalPrior):
+        proposals = prior.suggest_chords(
+            prev_state=prev_state,
+            context=context,
+            key_id=key_id,
+            k=top_k,
+        )
+        valid_chord_ids = {chord.id for chord in vocabularies.chords}
+        valid_proposals = tuple(
+            dict.fromkeys(
+                chord_id
+                for chord_id in proposals
+                if chord_id in valid_chord_ids
+            )
+        )[:top_k]
+        if valid_proposals:
+            return valid_proposals
 
     anchor_head_id = _head_id("root", vocabularies)
     queries = tuple(

@@ -410,6 +410,24 @@ class Prior(Protocol):
 
 
 @runtime_checkable
+class ChordProposalPrior(Prior, Protocol):
+    """Optional chord-proposal interface for transition priors.
+
+    Candidate generation depends on this structural protocol rather than
+    importing any particular trained-prior implementation.
+    """
+
+    def suggest_chords(
+        self,
+        prev_state: BeatState,
+        context: Optional[PriorContext],
+        key_id: int,
+        k: int = 3,
+    ) -> Tuple[int, ...]:
+        ...
+
+
+@runtime_checkable
 class BatchedPrior(Prior, Protocol):
     """Optional batch-scoring contract for priors."""
 

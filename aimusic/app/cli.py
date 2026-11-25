@@ -36,6 +36,8 @@ from aimusic.scoring.tension import (
     target_tension_curve,
 )
 from aimusic.theory.edo import EDO
+from aimusic.core.vocab import build_default_vocabularies
+from aimusic.ml.ngram_prior import NGramPrior
 
 
 def _json_ready(value: Any) -> Any:
@@ -172,11 +174,25 @@ def handle_generate(args: argparse.Namespace) -> None:
         sb_config=SBConfig(horizon_t=args.beats,
                            max_horizon_per_solve=getattr(args, "max_horizon_per_solve", None)),
     )
+    
     prior: Prior | None = (
         NullPrior() if getattr(args, "null_prior", False) else None
     )
+
+    
     prior_bundle = getattr(args, "prior_bundle", None)
-    if prior_bundle:
+    ngram_path = getattr(args, "ngram_json", None)
+
+    if prior_bundle and ngram_path:
+        raise ValueError("Select only one trained prior model.")
+
+    if (prior_bundle or ngram_path) and getattr(args, "null_prior", False):
+        raise ValueError("Cannot combine NullPrior with a trained prior.")
+
+    if ngram_path:
+        prior = NGramPrior.load(ngram_path)
+
+    elif prior_bundle:
         try:
             from aimusic.ml.inference import load_trained_neural_prior
         except ImportError:
@@ -186,7 +202,29 @@ def handle_generate(args: argparse.Namespace) -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
+
         prior = load_trained_neural_prior(prior_bundle)
+
+ 
+    if isinstance(prior, NGramPrior):
+        if prior.vocabulary_tokens is not None:
+            generation_vocab = build_default_vocabularies(style_config)
+            prior.validate_vocabularies(generation_vocab)
+
+
+
+    
+    # Validate serialized N-gram token mappings before generation.
+    # Legacy version 1 models do not contain vocabulary snapshots,
+    # so retain backward compatibility with those models.
+    if isinstance(prior, NGramPrior):
+        if prior.vocabulary_tokens is not None:
+            generation_vocab = build_default_vocabularies(
+                style_config
+            )
+            prior.validate_vocabularies(generation_vocab)
+
+
     plan_result, next_key = run_method_a(run_config, key=RNGKey(seed=args.seed), prior=prior)
     score, _ = decode_path_to_score(
         plan_result.path,
@@ -486,6 +524,14 @@ def main() -> None:
         help="Path to a trained prior artifact bundle (requires optional [ml] extra).",
     )
     gen_parser.set_defaults(func=handle_generate)
+
+
+    gen_parser.add_argument(
+        "--ngram-json",
+        type=str,
+        default=None,
+        help="Path to a factorized NGramPrior JSON model.",
+    )
 
     ins_parser = subparsers.add_parser("inspect", help="Inspect diagnostics")
     ins_parser.add_argument("file", type=str)
